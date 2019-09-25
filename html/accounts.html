@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Accounts</title>
+</head>
+<body>
+    <h1>Accounts</h1>
+    <ul>
+    {{range .}}
+        <li><a href="/account/{{.Id}}">{{.AccName}}</a></li>
+    {{end}}
+    </ul>
+</body>
+</html>

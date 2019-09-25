@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Finn</title>
+</head>
+<body>
+    <h1>Finn - Financial Management</h1>
+    <ul>
+        {{if .suggestUpload}}
+        <li><a href="/schema/upload">Upload schema</a></li>
+        {{else}}
+        <li><a href="/institutions">Institutions</a></li>
+        <li><a href="/accounts">Accounts</a></li>
+        <li>Categories</li>
+        <li>Projects</li>
+        {{end}}
+    </ul>
+</body>
+</html>

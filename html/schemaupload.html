@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Upload schema</title>
+</head>
+<body>
+    {{if .success}}
+        <h3>Schema file successfully uploaded</h3>
+    {{else if .error}}
+        <h3>Error uploading schema file: {{.error}}</h3>
+    {{else}}
+        <h3>Select schema file to upload</h3>
+    {{end}}
+    <form enctype="multipart/form-data" action="http://localhost:8080/schema/upload" method="post">
+        <input type="file" name="schema" />
+        <input type="submit" value="upload" />
+    </form>
+    <p/>
+    <a href="/">Home</a>
+</body>
+</html>

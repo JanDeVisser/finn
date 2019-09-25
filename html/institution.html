@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{.Name}}</title>
+</head>
+<body>
+    <h1>{{.Name}}</h1>
+    <div>{{.Description}}</div>
+    <h2>Accounts</h2>
+    <ul>
+    {{range .Accounts}}
+        <li><a href="/account/{{.Id}}">{{.AccName}} {{.CurrentBalance}}</a></li>
+    {{end}}
+    </ul>
+</body>
+</html>
