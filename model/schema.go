@@ -43,7 +43,7 @@ func JSONToTime(data map[string]interface{}) (t time.Time, err error) {
 	return
 }
 
-func ImportInstitutions(data interface{}) (err error) {
+func ImportInstitutions(mgr *grumble.EntityManager, data interface{}) (err error) {
 	if data == nil {
 		return
 	}
@@ -52,19 +52,20 @@ func ImportInstitutions(data interface{}) (err error) {
 		inst := data.(map[string]interface{})
 		i := &Institution{}
 		i.Name = inst["inst_name"].(string)
-		if err = grumble.Put(i); err != nil {
+		i.SetManager(mgr)
+		if err = mgr.Put(i); err != nil {
 			return
 		}
 		accounts := inst["accounts"].([]interface{})
 		for _, v := range accounts {
 			account := v.(map[string]interface{})
 			a := &Account{}
-			a.Initialize(i.AsKey(), 0)
+			a.Initialize(i, 0)
 			a.AccName = account["acc_name"].(string)
 			a.AccNr = account["acc_nr"].(string)
 			a.Description = account["description"].(string)
 			a.Importer = account["importer"].(string)
-			if err = grumble.Put(a); err != nil {
+			if err = mgr.Put(a); err != nil {
 				return err
 			}
 			var openingDate time.Time
@@ -96,39 +97,40 @@ func projectFactory(name string) (ret grumble.Persistable, err error) {
 	return
 }
 
-func importSubTree(parent grumble.Persistable, tree map[string]interface{}, factory Factory) (err error){
+func importSubTree(mgr *grumble.EntityManager, parent grumble.Persistable, tree map[string]interface{}, factory Factory) (err error) {
 	for subName, subTree := range tree {
-		var sub grumble.Persistable;
+		var sub grumble.Persistable
 		sub, err = factory(subName)
 		if err != nil {
 			return
 		}
-		var pk *grumble.Key = nil
 		if parent != nil {
-			pk = parent.AsKey()
+			sub.Initialize(parent, 0)
+		} else {
+			sub.SetManager(mgr)
 		}
-		sub.Initialize(pk, 0)
-		if err = grumble.Put(sub); err != nil {
+		if err = mgr.Put(sub); err != nil {
 			return
 		}
-		subTreeMap := subTree.(map[string]interface{})
-		if err = importSubTree(sub, subTreeMap, factory); err != nil {
-			return
+		switch s := subTree.(type) {
+		case map[string]interface{}:
+			if err = importSubTree(mgr, sub, s, factory); err != nil {
+				return
+			}
 		}
 	}
 	return
 }
 
-func ImportTree(data interface{}, factory Factory) (err error) {
-	if data == nil {
-		return
+func ImportTree(mgr *grumble.EntityManager, data interface{}, factory Factory) (err error) {
+	switch subTree := data.(type) {
+	case map[string]interface{}:
+		err = importSubTree(mgr, nil, subTree, factory)
 	}
-	subTree := data.(map[string]interface{})
-	err = importSubTree(nil, subTree, factory)
 	return
 }
 
-func ImportSchema(fileName string) (err error) {
+func ImportSchema(mgr *grumble.EntityManager, fileName string) (err error) {
 	var jsonText []byte
 	if jsonText, err = ioutil.ReadFile(fileName); err != nil {
 		return
@@ -139,13 +141,13 @@ func ImportSchema(fileName string) (err error) {
 		return
 	}
 	schema := jsonData.(map[string]interface{})
-	if err = ImportInstitutions(schema["institutions"]); err != nil {
+	if err = ImportInstitutions(mgr, schema["institutions"]); err != nil {
 		return
 	}
-	if err = ImportTree(schema["categories"], categoryFactory); err != nil {
+	if err = ImportTree(mgr, schema["categories"], categoryFactory); err != nil {
 		return
 	}
-	if err = ImportTree(schema["projects"], projectFactory); err != nil {
+	if err = ImportTree(mgr, schema["projects"], projectFactory); err != nil {
 		return
 	}
 	return

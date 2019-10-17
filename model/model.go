@@ -23,21 +23,23 @@ import (
 	"errors"
 	"fmt"
 	"github.com/JanDeVisser/grumble"
+	"net/url"
+	"strconv"
 	"time"
 )
 
 type Category struct {
 	grumble.Key
-	Name string
-	Description string
+	Name           string
+	Description    string
 	CurrentBalance float64 `grumble:"transient"`
 }
 
 type Project struct {
 	grumble.Key
-	Name string
-	Description string
-	Category *Category
+	Name           string
+	Description    string
+	Category       *Category
 	CurrentBalance float64 `grumble:"transient"`
 }
 
@@ -52,13 +54,13 @@ type Contact struct {
 
 type Institution struct {
 	grumble.Key
-	Name string
+	Name        string
 	Description string
-	Accounts []*Account `grumble:"transient"`
+	Accounts    []*Account `grumble:"transient"`
 }
 
-func GetInstitutions() (institutions []*Institution, err error) {
-	q := grumble.MakeQuery(&Institution{})
+func GetInstitutions(mgr *grumble.EntityManager) (institutions []*Institution, err error) {
+	q := mgr.MakeQuery(&Institution{})
 	q.WithDerived = true
 	results, err := q.Execute()
 	if err != nil {
@@ -73,33 +75,33 @@ func GetInstitutions() (institutions []*Institution, err error) {
 }
 
 func (institution *Institution) GetAccounts() (err error) {
-	institution.Accounts, err = GetAccounts(institution)
+	institution.Accounts, err = GetAccounts(institution.Manager(), institution)
 	return
 }
 
 //type TransactionType string
 const (
-	Debit = "D"
-	Credit = "C"
-	Transfer = "T"
+	Debit          = "D"
+	Credit         = "C"
+	Transfer       = "T"
 	OpeningBalance = "O"
-	Adjustment = "A"
+	Adjustment     = "A"
 )
 
 type Transaction struct {
 	grumble.Key
-	Date time.Time
-	TXType string
-	Amt float64
-	Currency string `grumble:"default=CAD"`
-	ForeignAmt float64
-	Debit float64 `grumble:"verbosename=Out;formula=(CASE WHEN \"Amt\" < 0 THEN -\"Amt\" ELSE 0 END)"`
-	Credit float64 `grumble:"verbosename=In;formula=(CASE WHEN \"Amt\" > 0 THEN \"Amt\" ELSE 0 END)"`
-	Description string
+	Date         time.Time
+	TXType       string
+	Amt          float64
+	Currency     string `grumble:"default=CAD"`
+	ForeignAmt   float64
+	Debit        float64 `grumble:"verbosename=Out;formula=(CASE WHEN \"Amt\" < 0 THEN -\"Amt\" ELSE 0 END)"`
+	Credit       float64 `grumble:"verbosename=In;formula=(CASE WHEN \"Amt\" > 0 THEN \"Amt\" ELSE 0 END)"`
+	Description  string
 	Consolidated bool
-	Category *Category
-	Project *Project
-	Contact *Contact
+	Category     *Category
+	Project      *Project
+	Contact      *Contact
 }
 
 type OpeningBalanceTx struct {
@@ -109,21 +111,23 @@ type OpeningBalanceTx struct {
 type TransferTx struct {
 	Transaction
 	CrossPost *TransferTx
-	Account *Account
+	Account   *Account
 }
 
 type Account struct {
 	grumble.Key
-	AccName string `grumble:"verbosename=Account name;label"`
-	AccNr string `grumble:"verbosename=Account #"`
-	Description string
-	Currency string `grumble:"default=CAD"`
-	Importer string
-	OpeningDate time.Time   `grumble:"transient"`
-	OpeningBalance float64  `grumble:"transient"`
-	CurrentBalance float64  `grumble:"transient"`
-	TotalDebit float64      `grumble:"transient"`
-	TotalCredit float64     `grumble:"transient"`
+	AccName        string `grumble:"verbosename=Account name;label"`
+	AccNr          string `grumble:"verbosename=Account #"`
+	Description    string
+	Currency       string `grumble:"default=CAD"`
+	Importer       string
+	OpeningDate    time.Time `grumble:"transient"`
+	OpeningBalance float64   `grumble:"transient"`
+	CurrentBalance float64   `grumble:"transient"`
+	TotalDebit     float64   `grumble:"transient"`
+	TotalCredit    float64   `grumble:"transient"`
+	InstName       string    `grumble:"transient"` // FIXME
+	InstIdent      int       `grumble:"transient"`
 }
 
 func (acc *Account) SetOpeningBalance(date time.Time, balance float64) (err error) {
@@ -135,7 +139,7 @@ func (acc *Account) SetOpeningBalance(date time.Time, balance float64) (err erro
 	tx.Date = date
 	tx.Amt = balance
 	tx.Description = "Opening Balance"
-	return grumble.Put(tx)
+	return acc.Manager().Put(tx)
 }
 
 func (acc *Account) MakeTransaction(txType string) (tx grumble.Persistable, err error) {
@@ -154,17 +158,17 @@ func (acc *Account) MakeTransaction(txType string) (tx grumble.Persistable, err 
 		tx = opening
 	}
 	if tx != nil {
-		_ = tx.Initialize(acc.AsKey(), 0)
+		_ = tx.Initialize(acc, 0)
 	}
 	return
 }
 
-func GetAccounts(institution *Institution) (accounts []*Account, err error) {
-	return accountQuery(institution, 0)
+func GetAccounts(mgr *grumble.EntityManager, institution *Institution) (accounts []*Account, err error) {
+	return accountQuery(mgr, institution, 0)
 }
 
-func GetAccount(id int) (account *Account, err error) {
-	accounts, err := accountQuery(nil, id)
+func GetAccount(mgr *grumble.EntityManager, id int) (account *Account, err error) {
+	accounts, err := accountQuery(mgr, nil, id)
 	if err != nil {
 		return
 	}
@@ -177,24 +181,31 @@ func GetAccount(id int) (account *Account, err error) {
 	return
 }
 
-func accountQuery(institution *Institution, id int) (accounts []*Account, err error) {
-	q := grumble.MakeQuery(&Account{})
+func GetAccountQuery(mgr *grumble.EntityManager, institution *Institution, id int) (q *grumble.Query, err error) {
+	q = mgr.MakeQuery(&Account{})
 	q.WithDerived = true
-	q.GroupBy = true
-	if institution != nil {
-		q.AddCondition(grumble.HasParent{Parent: institution.AsKey()})
-	}
 	if id != 0 {
-		q.AddCondition(grumble.HasId{Id: id})
+		q.AddQueryCondition(grumble.HasId{Id: id})
 	}
+	if institution != nil {
+		q.AddQueryCondition(grumble.HasParent{Parent: institution.AsKey()})
+	}
+	q = addTransactionJoin(q)
+	return
+}
+
+func addTransactionJoin(q *grumble.Query) *grumble.Query {
+	q.GroupBy = true
 	txJoin := grumble.Join{
 		QueryTable: grumble.QueryTable{
 			Kind:        grumble.GetKind(&Transaction{}),
 			WithDerived: true,
 			GroupBy:     false,
+			Alias:       "tx",
 		},
-		JoinType:   grumble.Outer,
-		FieldName:  "_parent",
+		JoinType:  grumble.Outer,
+		Direction: grumble.In,
+		FieldName: "_parent",
 	}
 	txJoin.AddAggregate(grumble.Aggregate{
 		Function: "SUM",
@@ -211,6 +222,86 @@ func accountQuery(institution *Institution, id int) (accounts []*Account, err er
 		Query:    nil,
 	})
 	q.AddJoin(txJoin)
+	openingBalance := grumble.SubQuery{
+		QueryTable: grumble.QueryTable{
+			Kind:        grumble.GetKind(&OpeningBalanceTx{}),
+			WithDerived: false,
+			GroupBy:     false,
+			Alias:       "opening",
+		},
+		Where: "(opening.\"_parent\"[1]).id = k.\"_id\"",
+	}
+	openingBalance.AddSubSelect(grumble.Computed{
+		Formula: "COALESCE(MIN(opening.\"Date\"), NOW())",
+		Name:    "OpeningDate",
+	})
+	openingBalance.AddSubSelect(grumble.Computed{
+		Formula: "COALESCE(SUM(opening.\"Amt\"), 0.0)",
+		Name:    "OpeningBalance",
+	})
+	q.AddSubQuery(openingBalance)
+	q.AddGlobalComputedColumn(grumble.Computed{
+		Formula: "COALESCE(SUM(tx.\"Amt\"), 0.0)",
+		Name:    "CurrentBalance",
+		Query:   nil,
+	})
+	addInstSubSelect := false
+	for _, j := range q.Joins {
+		if j.FieldName == "_parent" && j.Direction == grumble.Out {
+			q.RemoveJoin(j.Alias)
+			addInstSubSelect = true
+			break
+		}
+	}
+
+	// FIXME This should be handled in the Query - all 'Outgoing' joins should be added to
+	// the GROUP BY clause if the the grouping is on the main QueryTable.
+	if addInstSubSelect {
+		institution := grumble.SubQuery{
+			QueryTable: grumble.QueryTable{
+				Kind:        grumble.GetKind(&Institution{}),
+				WithDerived: true,
+				GroupBy:     false,
+				Alias:       "institution",
+			},
+			Where: "(k.\"_parent\"[1]).id = institution.\"_id\"",
+		}
+		institution.AddSubSelect(grumble.Computed{
+			Formula: "institution.\"Name\"",
+			Name:    "InstName",
+		})
+		institution.AddSubSelect(grumble.Computed{
+			Formula: "institution.\"_id\"",
+			Name:    "InstIdent",
+		})
+		q.AddSubQuery(institution)
+	}
+	return q
+}
+
+func (acc *Account) GetQuery(q *grumble.Query) *grumble.Query {
+	return addTransactionJoin(q)
+}
+
+func (acc *Account) ManyQuery(query *grumble.Query, values url.Values) (ret *grumble.Query) {
+	ret = query
+	switch {
+	case values.Get("institutionid") != "":
+		id, err := strconv.ParseInt(values.Get("institutionid"), 0, 0)
+		if err != nil {
+			return
+		}
+		k, _ := grumble.CreateKey(nil, grumble.GetKind(&Institution{}), int(id))
+		query.AddCondition(grumble.HasParent{Parent: k})
+	}
+	return addTransactionJoin(query)
+}
+
+func accountQuery(mgr *grumble.EntityManager, institution *Institution, id int) (accounts []*Account, err error) {
+	q, err := GetAccountQuery(mgr, institution, id)
+	if err != nil {
+		return
+	}
 	results, err := q.Execute()
 	if err != nil {
 		return
@@ -223,10 +314,41 @@ func accountQuery(institution *Institution, id int) (accounts []*Account, err er
 	return
 }
 
+// --------------------------------------------------------------------------
+
+func (tx *Transaction) ManyQuery(query *grumble.Query, values url.Values) (ret *grumble.Query) {
+	ret = query
+	switch {
+	case values.Get("accountid") != "":
+		id, err := strconv.ParseInt(values.Get("accountid"), 0, 0)
+		if err == nil {
+			query = makeTXQuery(query, nil, int(id))
+		}
+	}
+	return
+}
+
+func makeTXQuery(query *grumble.Query, acc *Account, accountid int) *grumble.Query {
+	query.WithDerived = true
+	var err error
+	if acc == nil && accountid > 0 {
+		var e grumble.Persistable
+		e, err = query.Manager.Get(Account{}, accountid)
+		acc = e.(*Account)
+	}
+	if err == nil && acc != nil {
+		query.AddCondition(grumble.HasParent{Parent: acc.AsKey()})
+	} else {
+		query.AddCondition(grumble.SimpleCondition{SQL: "FALSE"})
+	}
+	query.AddReferenceJoins()
+	query.AddSort(grumble.Sort{Column: "Date"})
+	return query
+}
+
 func (acc *Account) GetTransactions() (txs []*Transaction, err error) {
-	q := grumble.MakeQuery(&Transaction{})
-	q.WithDerived = true
-	q.AddReferenceJoins()
+	q := acc.Manager().MakeQuery(&Transaction{})
+	q = makeTXQuery(q, acc, 0)
 	results, err := q.Execute()
 	if err != nil {
 		return

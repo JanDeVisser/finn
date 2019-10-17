@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+{{define "Money"}}{{if ne . 0.0}}{{printf "%9.2f" .}}{{else}}&nbsp;{{end}}{{end}}
+{{define "Date"}}{{date .}}{{end}}
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <link rel="stylesheet" type="text/css" href="/css/finn.css"/>
+    <style type="text/css">
+        {{block "css" .}}
+        {{end}}
+    </style>
+    <script src="https://unpkg.com/react@16/umd/react.development.js" type="module"></script>
+    <script src="https://unpkg.com/react-dom@16/umd/react-dom.development.js" type="module"></script>
+    <script src="/javascript/main.js" type="module"></script>
+    {{block "imports" .}}
+    <script type="text/javascript">
+        {{block "javascript" .}}
+        {{end}}
+    </script>
+    {{end}}
+    <title>{{block "title" .}}Page Title{{end}}</title>
+</head>
+<body>
+{{block "content" .}}
+    <div id="topbar" class="topbar">
+        <div class="tools">
+            <nav>
+                <ul>
+                    <li>
+                        <a class="navitem" href="/">Home</a>
+                    </li>
+                    {{/*
+                    <li>
+                        <a class="navitem" onclick="st_show_form('login');" href="#">Login</a>
+                    </li>
+                    <li>
+                        <a class="navitem" onclick="st_show_form('signup');" href="#">Sign up</a>
+                    </li>
+                    <st:form name="login" url="/login" modal="true" onerror="login_error">
+                        <st:field id="userid" type="text" property="userid" label="Email" required="true"/>
+                        <st:field id="password" type="password" property="password" label="Password" required="true"/>
+                        <st:field id="remember_me" type="checkbox" property="remember_me" label="Remember me?"/>
+                        <st:footer>
+                            <st:action mode="new" label="Log in" action="save" redirect="/"/>
+                            <st:action mode="new" label="I forgot my password"
+                                       action="link" href="/um/reset"/>
+                            <st:action mode="new" label="Cancel" action="cancel"/>
+                        </st:footer>
+                    </st:form>
+                    <st:form name="signup" url="/um/signup" modal="true" onsubmitted="signup_submitted">
+                        <st:field id="userid" type="text" property="userid" label="Email" required="true"/>
+                        <st:field id="display_name" type="text" property="display_name" label="Name" required="true"/>
+                        <st:field id="password" type="password" property="password" label="Password" required="true" confirm="true"/>
+                        <st:footer>
+                            <st:action mode="new" label="Sign up" action="save"/>
+                            <st:action mode="new" label="Cancel" action="cancel"/>
+                        </st:footer>
+                    </st:form>
+*/}}
+                </ul>
+            </nav>
+        </div>
+    </div>
+    <div id="document" class="document">
+        <div id="documentwrapper" class="documentwrapper">
+            <div id="mainpagewrapper" class="mainpagewrapper">
+                <div class="mainpage" id="mainpage">
+                    {{block "mainpage" .}}{{end}}
+                </div>
+            </div>
+        </div>
+        <div id="sidebarwrapper" class="sidebarwrapper">
+            <div id="sidebar" class="sidebar">
+                {{block "sidebar" .}}
+                    <li><a href="/institutions">Institutions</a></li>
+                    <li><a href="/accounts">Accounts</a></li>
+                    <li>Categories</li>
+                    <li>Projects</li>
+                {{end}}
+            </div>
+        </div>
+    </div>
+{{end}}
+</body>
+</html>

@@ -1,6 +1,7 @@
 package tximport
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,12 @@ import (
 	"strings"
 	"time"
 )
+
+type Importer interface {
+	Process(*TXImport) error
+}
+
+type ImporterFactory func(*model.Account) (Importer, error)
 
 func setValueInObject(obj interface{}, name string, value interface{}) {
 	v := reflect.ValueOf(obj)
@@ -47,27 +54,51 @@ func setValuesInObject(obj interface{}, values map[string]interface{}, fallback 
 	}
 }
 
-func FindOrCreate(kind interface{}, field string, value string) (e grumble.Persistable, err error) {
-	e, err = grumble.GetKind(kind).By(field, value)
+type ImportStatus string
+
+const (
+	Initial     ImportStatus = "Initial"
+	Read                     = "Read"
+	InProgress               = "InProgress"
+	Completed                = "Completed"
+	ImportError              = "Error"
+	Partial                  = "Partial"
+)
+
+type TXImport struct {
+	grumble.Key
+	Timestamp time.Time
+	FileName  string
+	Status    ImportStatus
+	Data      string
+	Total     int
+	Good      int
+	Bad       int
+	Errors    string
+	importer  Importer
+}
+
+func (imp *TXImport) FindOrCreate(kind interface{}, field string, value string) (e grumble.Persistable, err error) {
+	e, err = imp.Manager().By(grumble.GetKind(kind), field, value)
 	if err != nil {
 		err = errors.New(fmt.Sprintf("By(%q = %q): %s", field, value, err))
 		return
 	}
 	if e == nil {
-		e, err = grumble.GetKind(kind).Make(nil, 0)
+		e, err = imp.Manager().Make(grumble.GetKind(kind), nil, 0)
 		if err != nil {
 			return nil, err
 		}
 		setValueInObject(e, field, value)
-		err = grumble.Put(e)
+		err = imp.Manager().Put(e)
 	}
 	return
 }
 
-func SetReference(e grumble.Persistable, field string, referenceKind interface{}, value string) (err error) {
+func (imp *TXImport) SetReference(e grumble.Persistable, field string, referenceKind interface{}, value string) (err error) {
 	if value != "" {
 		var ref grumble.Persistable
-		ref, err = FindOrCreate(referenceKind, "Name", value)
+		ref, err = imp.FindOrCreate(referenceKind, "Name", value)
 		if err != nil {
 			return
 		}
@@ -76,27 +107,7 @@ func SetReference(e grumble.Persistable, field string, referenceKind interface{}
 	return
 }
 
-
-type ImportStatus string
-const (
-	Initial ImportStatus = "Initial"
-	Read = "Read"
-	InProgress = "InProgress"
-	Completed = "Completed"
-	ImportError = "Error"
-	Partial = "Partial"
-)
-
-type TXImport struct {
-	grumble.Key
-	Timestamp time.Time
-	FileName string
-	Status ImportStatus
-	Data string
-	Errors string
-}
-
-func (imp *TXImport) Update(status ImportStatus, err error) {
+func (imp *TXImport) AddError(err error) {
 	if err != nil {
 		if imp.Errors == "" {
 			imp.Errors = err.Error()
@@ -104,10 +115,35 @@ func (imp *TXImport) Update(status ImportStatus, err error) {
 			imp.Errors = imp.Errors + "\n" + err.Error()
 		}
 	}
+}
+
+func (imp *TXImport) Update(status ImportStatus, err error) {
+	if err != nil {
+		imp.AddError(err)
+	}
 	imp.Status = status
-	if e := grumble.Put(imp); e != nil {
+	if e := imp.Manager().Put(imp); e != nil {
 		panic(fmt.Sprintf("Error updating import record: %s", e.Error()))
 	}
+}
+
+func (imp *TXImport) Read() (err error) {
+	imp.Update(InProgress, nil)
+	err = imp.Manager().TX(func(db *sql.DB) (err error) {
+		err = imp.importer.Process(imp)
+		return
+	})
+	switch {
+	case err != nil:
+		imp.Update(ImportError, err)
+	case imp.Bad > 0 && imp.Good == 0:
+		imp.Update(ImportError, nil)
+	case imp.Bad > 0 && imp.Good > 0:
+		imp.Update(Partial, nil)
+	default:
+		imp.Update(Completed, nil)
+	}
+	return
 }
 
 func MakeTXImport(account *model.Account, fileName string) (imp *TXImport, err error) {
@@ -115,29 +151,28 @@ func MakeTXImport(account *model.Account, fileName string) (imp *TXImport, err e
 		FileName: fileName, Status: Initial,
 		Timestamp: time.Now(),
 	}
-	imp.Initialize(account.AsKey(), 0)
+	imp.Initialize(account, 0)
 	var data []byte
 	var status ImportStatus
-	if data, err = ioutil.ReadFile(filepath.Join("data", account.AccName, fileName)); err != nil {
+	//if data, err = ioutil.ReadFile(filepath.Join("data", account.AccName, fileName)); err != nil {
+	if data, err = ioutil.ReadFile(fileName); err != nil {
 		status = ImportError
 	} else {
 		imp.Data = string(data)
 		status = Read
 	}
 	imp.Update(status, err)
+	if imp.importer, err = GetImporter(account); err != nil {
+		imp.Update(ImportError, err)
+		return
+	}
 	return
 }
 
-type Importer interface {
-	Read(string) error
-}
-
-type ImporterFactory func(*model.Account) (Importer, error)
-
 type ImportField struct {
-	Name string
-	Num int
-	Type string
+	Name    string
+	Num     int
+	Type    string
 	Options map[string]interface{}
 }
 
@@ -171,12 +206,12 @@ func (fld *ImportField) Convert(str string) (ret interface{}, err error) {
 
 type Template struct {
 	Template string
-	MatchOn string
-	Type string
-	Contact string
+	MatchOn  string
+	Type     string
+	Contact  string
 	Category string
-	Project string
-	re *regexp.Regexp
+	Project  string
+	re       *regexp.Regexp
 }
 
 func MakeTemplate(def map[string]interface{}) (ret Template, err error) {
@@ -195,7 +230,7 @@ type CSVImporter struct {
 }
 
 func (imp *CSVImporter) parseTemplate() (err error) {
-	fileName := filepath.Join("data", imp.Account.AccName + ".json")
+	fileName := filepath.Join("data", imp.Account.AccName+".json")
 	var jsonText []byte
 	if jsonText, err = ioutil.ReadFile(fileName); err != nil {
 		return
@@ -256,43 +291,33 @@ func (imp *CSVImporter) parseTemplate() (err error) {
 	return
 }
 
-func (imp *CSVImporter) Read(fileName string) (err error) {
-	tximport, err := MakeTXImport(imp.Account, fileName)
-	if err != nil {
-		return
-	}
-	if tximport.Status == ImportError {
-		err = errors.New(tximport.Errors)
-		return
-	}
-	tximport.Update(InProgress, nil)
-	rdr := csv.NewReader(strings.NewReader(tximport.Data))
+func (imp *CSVImporter) Process(txImport *TXImport) (err error) {
+	rdr := csv.NewReader(strings.NewReader(txImport.Data))
 	if imp.HeaderLine {
 		if _, err = rdr.Read(); err != nil {
 			return
 		}
 	}
 	var e error
-	good := 0
-	bad := 0
+	txImport.Good = 0
+	txImport.Bad = 0
+	txImport.Total = 0
 	for record, e := rdr.Read(); e == nil; record, e = rdr.Read() {
-		if err = imp.ProcessLine(record, tximport); err != nil {
-			tximport.Update(Partial, err)
-			bad++
+		txImport.Total++
+		if err = imp.ProcessLine(record, txImport); err != nil {
+			txImport.Bad++
+			txImport.AddError(err)
 		} else {
-			good++
+			txImport.Good++
 		}
 	}
 	if e != io.EOF {
 		err = e
-		tximport.Update(ImportError, err)
-	} else if tximport.Status == Partial && good == 0 {
-		tximport.Update(ImportError, nil)
 	}
 	return
 }
 
-func (imp *CSVImporter) ProcessLine(line []string, tximport *TXImport) (err error) {
+func (imp *CSVImporter) ProcessLine(line []string, txImport *TXImport) (err error) {
 	fields := make(map[string]string)
 	for ix, f := range line {
 		if ix >= len(imp.Mappings) {
@@ -304,7 +329,7 @@ func (imp *CSVImporter) ProcessLine(line []string, tximport *TXImport) (err erro
 		fields[imp.Mappings[ix].Name] = f
 	}
 	imp.ApplyTemplates(fields)
-	err = imp.SaveTransaction(tximport, fields)
+	err = imp.SaveTransaction(txImport, fields)
 	return
 }
 
@@ -331,10 +356,10 @@ func (imp *CSVImporter) ApplyTemplates(fields map[string]string) {
 	}
 }
 
-func (imp *CSVImporter) SaveTransaction(tximport *TXImport, fields map[string]string) (err error) {
+func (imp *CSVImporter) SaveTransaction(txImport *TXImport, fields map[string]string) (err error) {
 	txType := model.Debit
 	if t, ok := fields["type"]; ok {
-		txType = model.TransactionType(t)
+		txType = t
 	}
 	var tx grumble.Persistable
 	tx, err = imp.Account.MakeTransaction(txType)
@@ -349,16 +374,16 @@ func (imp *CSVImporter) SaveTransaction(tximport *TXImport, fields map[string]st
 		}
 		setValueInObject(tx, mapping.Name, val)
 	}
-	if err = SetReference(tx, "Contact", model.Contact{}, fields["contact"]); err != nil {
+	if err = txImport.SetReference(tx, "Contact", model.Contact{}, fields["contact"]); err != nil {
 		return
 	}
-	if err = SetReference(tx, "Project", model.Project{}, fields["project"]); err != nil {
+	if err = txImport.SetReference(tx, "Project", model.Project{}, fields["project"]); err != nil {
 		return
 	}
-	if err = SetReference(tx, "Category", model.Category{}, fields["category"]); err != nil {
+	if err = txImport.SetReference(tx, "Category", model.Category{}, fields["category"]); err != nil {
 		return
 	}
-	if err = grumble.Put(tx); err != nil {
+	if err = tx.Manager().Put(tx); err != nil {
 		return
 	}
 	return

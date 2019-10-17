@@ -1,30 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-{{with .Account}}    
-    <title>{{.AccName}}</title>
-</head>
-<body>
-    <h1>{{.AccName}}</h1>
-    <div>{{.Description}}</div>
-    <table>
-        <tr><td>Account #</td><td>{{.AccNr}}</td></tr>
-        <tr><td>Currency</td><td>{{.Currency}}</td></tr>
-        <tr><td>Opening Date</td><td>{{.OpeningDate}}</td></tr>
-        <tr><td>Opening Balance</td><td>{{.OpeningBalance}}</td></tr>
-        <tr><td>Current Balance</td><td>{{.CurrentBalance}}</td></tr>
-    </table>
-{{end}}    
-    <h2>Transactions</h2>
-    <table>
-        <tr><th>T</th><th>Date</th><th>Description</th><th>In</th><th>Out</th><th>Contact</th><th>Category</th><th>Project</th></tr>
-    {{range .Transactions}}
-        <tr><td>{{.TXType}}</td><td>{{.Date}}</td><td>{{.Description}}</td><td>{{.Credit}}</td><td>{{.Debit}}</td>
-            <td>{{if .Contact}}{{.Contact.Name}}{{else}}&nbsp;{{end}}</td>
-            <td>{{if .Category}}{{.Category.Name}}{{else}}&nbsp;{{end}}</td>
-            <td>{{if .Project}}{{.Project.Name}}{{else}}&nbsp;{{end}}</td></tr>
-    {{end}}
-    </table>
-</body>
-</html>
+{{define "title"}}{{.Account.AccName}}{{end}}
+
+{{define "imports"}}
+<script src="/javascript/bundle.js" type="module"></script>
+{{end}}
